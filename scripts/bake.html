@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Turntable Baker</title>
+  <style>
+    body { margin: 0; background: #07080a; overflow: hidden; }
+    canvas { width: 1600px; height: 900px; display: block; }
+  </style>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/node_modules/three/build/three.module.js",
+      "three/addons/": "/node_modules/three/examples/jsm/",
+      "three/examples/jsm/": "/node_modules/three/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="c" width="1600" height="900"></canvas>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from '/node_modules/three/examples/jsm/loaders/GLTFLoader.js';
+    import { DRACOLoader } from '/node_modules/three/examples/jsm/loaders/DRACOLoader.js';
+
+    console.log("Three, GLTFLoader & DRACOLoader loaded successfully!");
+
+    const urlParams = new URLSearchParams(window.location.search);
+    const modelPath = urlParams.get('model') || '/public/models/sedan.glb';
+    const scale = parseFloat(urlParams.get('scale') || '0.75');
+    const totalFrames = parseInt(urlParams.get('frames') || '36', 10);
+
+    const canvas = document.getElementById('c');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, preserveDrawingBuffer: true });
+    renderer.setSize(1600, 900);
+    renderer.setPixelRatio(1);
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.1;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#07080a');
+
+    const camera = new THREE.PerspectiveCamera(34, 1600 / 900, 0.1, 100);
+    camera.position.set(3.8, 1.25, 3.8);
+    camera.lookAt(0, 0.45, 0);
+
+    // Studio lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+    scene.add(ambientLight);
+
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+    keyLight.position.set(5, 8, 5);
+    scene.add(keyLight);
+
+    const fillLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    fillLight.position.set(-5, 6, 3);
+    scene.add(fillLight);
+
+    const rimLight = new THREE.DirectionalLight(0xd8e8ff, 1.8);
+    rimLight.position.set(-4, 5, -5);
+    scene.add(rimLight);
+
+    // Dark Studio Floor
+    const floorGeo = new THREE.PlaneGeometry(40, 40);
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x08090c, roughness: 0.8, metalness: 0.2 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.y = -0.01;
+    scene.add(floor);
+
+    // Floor Shadow
+    const shadowGeo = new THREE.PlaneGeometry(5.2, 2.6);
+    const shadowMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.75, depthWrite: false });
+    const shadow = new THREE.Mesh(shadowGeo, shadowMat);
+    shadow.rotation.x = -Math.PI / 2;
+    shadow.position.y = 0.005;
+    scene.add(shadow);
+
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('/node_modules/three/examples/jsm/libs/draco/gltf/');
+
+    const loader = new GLTFLoader();
+    loader.setDRACOLoader(dracoLoader);
+
+    const carGroup = new THREE.Group();
+    scene.add(carGroup);
+
+    console.log("Loading model from:", modelPath);
+    loader.load(modelPath, (gltf) => {
+      try {
+        console.log("Model loaded successfully!");
+        const car = gltf.scene;
+        
+        // Auto-center and normalize scale
+        const box = new THREE.Box3().setFromObject(car);
+        const size = box.getSize(new THREE.Vector3());
+        const center = box.getCenter(new THREE.Vector3());
+        console.log("Model size:", size.x, size.y, size.z, "Center:", center.x, center.y, center.z);
+        
+        const maxDim = Math.max(size.x, size.y, size.z) || 1.0;
+        const targetSize = 4.4;
+        const fitScale = (targetSize / maxDim);
+        console.log("Fit scale:", fitScale);
+        
+        car.scale.set(fitScale, fitScale, fitScale);
+        car.position.set(-center.x * fitScale, -box.min.y * fitScale, -center.z * fitScale);
+
+        car.traverse((child) => {
+          if (child.isMesh) {
+            const name = (child.name || '').toLowerCase();
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            const matNames = mats.map(m => (m && m.name ? m.name.toLowerCase() : '')).join(' ');
+
+            if (name.includes('body') || matNames.includes('paint') || matNames.includes('carpaint') || matNames.includes('base') || matNames.includes('ao_carpaint') || matNames.includes('exterior') || matNames.includes('car_paint') || name.includes('car_paint')) {
+              child.material = new THREE.MeshStandardMaterial({
+                color: 0x181a1e,
+                roughness: 0.15,
+                metalness: 0.85
+              });
+            } else if (name.includes('window') || matNames.includes('window') || matNames.includes('glass') || matNames.includes('windshild') || name.includes('glass')) {
+              child.material = new THREE.MeshStandardMaterial({
+                color: 0x0a0d12,
+                roughness: 0.05,
+                metalness: 0.2,
+                transparent: true,
+                opacity: 0.85
+              });
+            } else if (name.includes('wheel') || matNames.includes('rim') || matNames.includes('metal') || name.includes('rim') || name.includes('tire')) {
+              child.material = new THREE.MeshStandardMaterial({
+                color: 0x222428,
+                roughness: 0.2,
+                metalness: 0.95
+              });
+            }
+          }
+        });
+
+        carGroup.add(car);
+
+        // Render frames
+        const frames = [];
+        for (let i = 0; i < totalFrames; i++) {
+          const angle = (i / totalFrames) * Math.PI * 2;
+          carGroup.rotation.y = angle;
+          renderer.render(scene, camera);
+          frames.push(canvas.toDataURL('image/webp', 0.90));
+        }
+
+        console.log("Generated " + frames.length + " frames successfully!");
+        window.__FRAMES__ = frames;
+        window.__BAKE_READY__ = true;
+      } catch (err) {
+        console.error("Error during bake processing:", err);
+      }
+    }, (xhr) => {
+      // progress
+    }, (err) => {
+      console.error('Error loading model:', err);
+    });
+  </script>
+</body>
+</html>
